@@ -26,13 +26,25 @@ import (
 // AvailableCommandsResponse represents the response for GET /api/v1/terminal/available-commands
 type AvailableCommandsResponse struct {
 	Commands []terminal.CommandSpec `json:"commands"`
+
+	// AllowedFlags is the exhaustive set of flags the terminal accepts.
+	// Flag validation is default-deny, so anything absent from this list is
+	// rejected with 403. Exposing it lets the console validate before submitting
+	// instead of inferring the rules from the blocked-flag list.
+	AllowedFlags []terminal.FlagSpec `json:"allowedFlags"`
+
+	// DeniedFlags is the explicitly denied subset, surfaced so the console can
+	// explain *why* a flag was refused rather than showing a generic error.
+	DeniedFlags []terminal.FlagSpec `json:"deniedFlags"`
 }
 
 // GetAvailableCommands handles GET /api/v1/terminal/available-commands
-// Returns the list of all permitted commands and subcommands
+// Returns the list of all permitted commands, subcommands and flags
 func (h *Handler) GetAvailableCommands(w http.ResponseWriter, r *http.Request) {
 	response := AvailableCommandsResponse{
-		Commands: terminal.GetAllowedCommands(),
+		Commands:     terminal.GetAllowedCommands(),
+		AllowedFlags: terminal.GetAllowedFlags(),
+		DeniedFlags:  terminal.GetDeniedFlags(),
 	}
 
 	w.Header().Set("Content-Type", "application/json")

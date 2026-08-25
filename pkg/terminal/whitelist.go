@@ -73,6 +73,87 @@ func ValidateCommand(cmd *ParsedCommand) error {
 		}
 	}
 
+	// Validate every flag against the allowlist.
+	//
+	// Both collections must be checked: ParseCommand routes the same flag name
+	// into Flags or BooleanFlags depending on what follows it, so "--as admin"
+	// lands in Flags while "--as --as-group=x" makes "as" a BooleanFlag.
+	// Checking only one leaves the other as a bypass.
+	for _, flag := range cmd.BooleanFlags {
+		if err := validateFlag(flag); err != nil {
+			return err
+		}
+	}
+	for flag, value := range cmd.Flags {
+		if err := validateFlag(flag); err != nil {
+			return err
+		}
+
+		// An allowed name is not sufficient. The data provider emits the flag
+		// and its value as two separate argv elements, and kubectl's boolean
+		// flags do not consume the token that follows them, so a flag-shaped
+		// value becomes a flag in its own right:
+		//
+		//   --show-labels=--as=system:admin
+		//     -> Flags["show-labels"] = "--as=system:admin"
+		//     -> argv [... "--show-labels" "--as=system:admin" ...]
+		//     -> kubectl sends Impersonate-User: system:admin
+		//
+		// Rejecting flag-shaped values closes this for every allowed flag,
+		// including any added later.
+		if isFlagLikeValue(value) {
+			return ErrCommandNotPermitted
+		}
+	}
+
+	// Positional arguments are reassembled into argv the same way. ParseCommand
+	// currently routes every dash-prefixed token to the flag branches, so this
+	// is a guard against that changing rather than a reachable bypass today.
+	for _, arg := range cmd.Args {
+		if isFlagLikeValue(arg) {
+			return ErrCommandNotPermitted
+		}
+	}
+
+	return nil
+}
+
+// isFlagLikeValue reports whether a value would be interpreted as a flag by
+// kubectl if it reached the command line as a standalone argv element.
+//
+// Negative numbers are deliberately excluded: "--tail=-1" is a legitimate
+// kubectl invocation, and pflag only resolves a token to a flag when a name
+// follows the leading dashes.
+func isFlagLikeValue(value string) bool {
+	if len(value) < 2 || value[0] != '-' {
+		return false
+	}
+
+	name := strings.TrimLeft(value, "-")
+	if name == "" {
+		// "--" ends flag parsing and would unhide any token after it.
+		return true
+	}
+
+	c := name[0]
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+// validateFlag applies the deny-then-allow decision to a single flag name.
+//
+// The explicit denylist is consulted first so that a high-risk flag added to
+// AllowedFlagsSpec by mistake still cannot reach kubectl. The default-deny
+// branch is what actually closes the escalation path: anything not named in
+// AllowedFlagsSpec is rejected rather than forwarded to the data provider.
+func validateFlag(flag string) error {
+	if IsFlagDenied(flag) {
+		return ErrCommandNotPermitted
+	}
+
+	if !IsFlagAllowed(flag) {
+		return ErrCommandNotPermitted
+	}
+
 	return nil
 }
 

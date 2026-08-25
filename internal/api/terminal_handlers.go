@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -151,6 +152,23 @@ func (h *Handler) ExecuteTerminal(w http.ResponseWriter, r *http.Request) {
 		}
 		// Command not permitted (subcommand/flag blocked) → 403
 		if errors.Is(err, terminal.ErrCommandNotPermitted) {
+			// Audit the rejection so attempts to use denied flags are visible.
+			// Flag names only: the values of denied flags (--token, --password)
+			// are credentials and must not reach the logs.
+			flagNames := make([]string, 0, len(parsedCmd.Flags)+len(parsedCmd.BooleanFlags))
+			for name := range parsedCmd.Flags {
+				flagNames = append(flagNames, name)
+			}
+			flagNames = append(flagNames, parsedCmd.BooleanFlags...)
+			sort.Strings(flagNames)
+
+			log.FromContext(ctx).Info("terminal command rejected by whitelist",
+				"command", parsedCmd.Command,
+				"subcommand", parsedCmd.Subcommand,
+				"flags", flagNames,
+				"clusterID", req.ClusterID,
+			)
+
 			writeJSONError(w, http.StatusForbidden, ErrorResponse{
 				Error:   "not_permitted",
 				Message: "Command not permitted",

@@ -103,14 +103,22 @@ class DataProviderServicer(dataprovider_pb2_grpc.DataProviderServiceServicer):
                 cmd.extend(request.args)
 
                 # Add named flags (use single - for short flags, double -- for long flags)
+                #
+                # The flag and its value are emitted as a SINGLE argv element in
+                # --flag=value form. Emitting them as two elements let a value be
+                # parsed as a flag in its own right, because kubectl's boolean
+                # flags do not consume the token that follows them:
+                #   ["--show-labels", "--as=system:admin"] -> impersonation
+                #   ["--show-labels=--as=system:admin"]    -> invalid argument
+                # The operator rejects flag-shaped values before they reach here;
+                # this keeps the escalation impossible even if that check regresses.
                 for key, value in request.flags.items():
                     if len(key) == 1:
-                        # Short flag: -n
-                        cmd.append(f"-{key}")
+                        # Short flag: -n=default
+                        cmd.append(f"-{key}={value}")
                     else:
-                        # Long flag: --namespace
-                        cmd.append(f"--{key}")
-                    cmd.append(value)
+                        # Long flag: --namespace=default
+                        cmd.append(f"--{key}={value}")
 
                 # Add boolean flags (use single - for short flags, double -- for long flags)
                 for flag in request.boolean_flags:

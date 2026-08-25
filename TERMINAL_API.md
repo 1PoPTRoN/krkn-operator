@@ -119,9 +119,53 @@ When a command executes but returns exit_code > 0, the response includes full ou
 - `api-versions` - Print supported API versions
 - `cluster-info` - Display cluster information
 
+### Flag Validation (Default-Deny)
+
+Flags are validated against an **allowlist**: any flag not named below is rejected
+with `403 not_permitted`. The live list is served by
+`GET /api/v1/terminal/available-commands` as `allowedFlags` and `deniedFlags`.
+
+**Allowed flags** — all read-only, limited to selecting, filtering and formatting:
+
+| Purpose | Flags |
+|---------|-------|
+| Scope | `-n` / `--namespace`, `-A` / `--all-namespaces` |
+| Filtering | `-l` / `--selector`, `--field-selector`, `--ignore-not-found` |
+| Output | `-o` / `--output`, `--no-headers`, `--show-labels`, `--show-kind`, `--sort-by`, `-L` / `--label-columns` |
+| Logs | `-c` / `--container`, `--tail`, `--since`, `--since-time`, `--limit-bytes`, `-p` / `--previous`, `--timestamps`, `--prefix` |
+| Subcommand-specific | `--containers` (top), `--recursive` / `--api-version` (explain), `--namespaced` / `--api-group` / `--verbs` (api-resources), `--client` / `--short` (version) |
+
+**Explicitly denied flags** — these would let a caller act outside the identity
+and API surface the terminal is scoped to:
+
+- **Impersonation**: `--as`, `--as-group`, `--as-uid` — escalate to any user or
+  group (e.g. `system:masters`) that the stored kubeconfig may impersonate
+- **Credentials / transport**: `--token`, `-s` / `--server`, `--kubeconfig`,
+  `--client-certificate`, `--client-key`, `--certificate-authority`,
+  `--tls-server-name`, `--insecure-skip-tls-verify`, `--username`, `--password`
+- **Kubeconfig selection**: `--user`, `--cluster`, `--context` — a stored
+  kubeconfig may contain more than one identity
+- **API escape**: `--raw` — bypasses the subcommand allowlist entirely
+- **Verbosity**: `-v`, `--vmodule`, `--log-file`, and the other klog flags —
+  `-v=6` and above return request URLs, headers and bodies to the caller via
+  stderr. client-go masks the `Authorization` header, so this is not a
+  credential leak, but it is not read-only output formatting either
+- **Local filesystem**: `--cache-dir`, `--profile`, `--profile-output`
+
+**Flag values are validated too.** A value that is shaped like a flag
+(`--foo`, `-f`, `--`) is rejected regardless of which flag carries it, because
+kubectl's boolean flags do not consume the token that follows them — so
+`--show-labels=--as=system:admin` would otherwise reach kubectl as a separate
+`--as` flag and be honoured. Negative numbers (`--tail=-1`) remain valid.
+
+> Widening the allowlist is a security change. The data provider performs no
+> validation of its own — it reassembles the parsed command into argv and
+> executes it — so this list is the only boundary.
+
 ### Blocked Flags (No Streaming in v1)
 
-The following flags are blocked because they require streaming (WebSocket/SSE), which is not supported in v1:
+Blocked separately from the allowlist because they are a v1 capability gap
+rather than a security concern; streaming requires WebSocket/SSE support:
 
 - `--watch` / `-w` - Watch for changes
 - `--follow` / `-f` - Follow log output
